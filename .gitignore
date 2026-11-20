@@ -1,0 +1,5 @@
+# your own settings - never commit
+roll.toml
+__pycache__/
+*.pyc
+.venv/

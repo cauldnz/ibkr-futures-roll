@@ -1,0 +1,34 @@
+# roll.example.toml - optional config for roll_futures.py
+# Copy to roll.toml next to the script (it is picked up automatically) or pass --config PATH.
+# Everything here is optional. Product keys are the IBKR symbol (ZN, MES, MGC, SPI, XINA50, ...).
+
+# Products to roll in the same session, e.g. the two legs of a curve trade.
+# The script warns if only part of a group would be rolled.
+pairs = [["ZT", "UB"]]
+
+[defaults]
+port = 7496            # 7496 TWS live, 7497 TWS paper, 4001/4002 IB Gateway live/paper
+within_days = 35       # consider positions whose last trading day is within this many days
+# account = "U1234567" # default: first managed account
+
+# Physically delivered contracts: the broker's real deadline is before FIRST NOTICE DAY, which can be
+# a month earlier than the last trading day. Widen the window so they show up in time.
+[products.ZN]
+within_days = 45
+[products.ZT]
+within_days = 45       # ZT trades to month-end but first notice is the end of the prior month
+
+# By default the roll goes to the NEXT LISTED expiry. Some products list monthly contracts but
+# trade one month far more actively; pick the month you want.
+[products.MGC]
+back_month = "202702"  # COMEX micro gold: Feb, Apr, Jun, Aug, Oct, Dec are the active months
+within_days = 45
+
+# Calendar-spread price step, if finer than the outright tick and not in the script's table.
+# [products.ES]
+# spread_tick = 0.05
+
+# Products you roll by hand (or not at all).
+[products.SPI]
+skip = true
+note = "rolled by hand"
