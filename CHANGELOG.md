@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.0 - 2026-11-20
+- Ladders: `ladder_months = N` keeps a position spread equally over the next N listed months. The front month rolls into a new back month with one spread order when that keeps the months within one contract of each other; otherwise extra spreads even them out. The total position is never changed.
+- The dry run's "after" line tracks several spreads into and out of the same month.
+
 ## 0.1.0 - 2026-11-20
 - First release: reads futures positions from TWS, rolls the nearest expiry of each product as one passive calendar-spread order (BUY next / SELL current), dry run by default.
 - Spread price steps for ZN (1/128) and ZT (1/256) confirmed against TWS; UB and CME micro equity-index steps inferred from book quotes.

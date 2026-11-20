@@ -51,6 +51,9 @@ Everything in it is optional. Use it to:
 - **roll two contracts together** (`pairs`), for example the two legs of a curve trade.
 - **pick the month to roll into** (`back_month`). The default is the next listed month, which isn't always the busy one.
 - **roll earlier** (`within_days`). Physically delivered futures, such as Treasuries and gold, must be rolled before *first notice day*, which can be weeks before the contract stops trading.
+- **keep a ladder of months** (`ladder_months`). For example, `3` keeps the position spread equally over the next three months.
+  - When the front month comes due, it rolls into the month after the last one.
+  - If the months would end up uneven, the roll also evens them out.
 - **leave a contract alone** (`skip = true`).
 
 `roll.example.toml` shows each one.

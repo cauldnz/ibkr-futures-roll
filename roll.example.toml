@@ -28,6 +28,13 @@ within_days = 45
 # [products.ES]
 # spread_tick = 0.05
 
+# A ladder: keep the position spread equally over the next N listed months. When the front
+# month comes due its contracts move into the month after the last rung (one spread order).
+# If the months would end up more than one contract apart, extra spreads even them out.
+[products.MCL]
+ladder_months = 3
+within_days = 21
+
 # Products you roll by hand (or not at all).
 [products.SPI]
 skip = true

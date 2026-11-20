@@ -94,6 +94,11 @@ Without uv: `pip install ib_async`, then `python roll_futures.py …`.
   - Inferred from book quotes: UB 1/128, and MES/MNQ/M2K 0.05.
   - Any other product uses the contract's own minimum step. That's always valid but may rest further back than necessary.
 - **Window.** The window is measured to the **last trading day**. For physically delivered futures, the broker's real deadline is before **first notice day**, which TWS does not report. Users widen `within_days` per product for this. If you're asked about deadlines, say so rather than trusting `days` alone.
+- **Ladders.** A product with `ladder_months = N` is held across the next N listed months, with equal weights. Any remainder goes to the nearest months.
+  - When its front month is inside the window, the whole front month moves into the month after the last one: one spread order, if that leaves every month within one contract of an equal split.
+  - Otherwise the tool emits several spread orders to even the months out, for example from the front and from overweight months into underweight ones.
+  - The total position is never changed. Months held beyond the ladder are left alone and reported.
+  - In `rolls[]` each spread is its own entry, and `current` is the month being sold from (for a long).
 - **Next month.** The default target is the next **listed** expiry. Products that list monthly but trade a few months actively (for example COMEX gold) need `back_month` in the config.
 
 ## Config (`roll.toml`, TOML)
@@ -109,6 +114,7 @@ back_month = "202702"           # YYYYMM to roll into
 within_days = 45                # per-product window
 spread_tick = 0.1               # override the spread price step
 skip = true                     # leave alone
+ladder_months = 3               # hold the position equally over the next 3 listed months
 note = "free text shown in output"
 ```
 

@@ -117,6 +117,45 @@ def choose_back(front_cd, listed, month=None):
     return later[0] if later else None
 
 
+def ladder_targets(total, n):
+    """Equal split of `total` contracts over `n` rungs; any remainder goes to the nearest rungs."""
+    base, rem = divmod(total, n)
+    return [base + (1 if i < rem else 0) for i in range(n)]
+
+
+def ladder_moves(front_qty, rung_qty, total=None):
+    """Spread trades that empty the front month and bring the rungs to equal weights.
+
+    front_qty: contracts (absolute) in the expiring month; rung_qty: list of absolute holdings in the
+    ladder months, nearest first. Returns [(src, dst, n)] where src is "front" or a rung index and dst
+    is a rung index. Total is preserved (rolls never add or remove exposure)."""
+    total = front_qty + sum(rung_qty) if total is None else total
+    # Prefer the one-ticket slide (whole front month into the last rung) when it leaves every rung
+    # within one contract of an equal split; otherwise rebalance to equal weights.
+    lo, hi = total // len(rung_qty), -(-total // len(rung_qty))
+    slid = rung_qty[:-1] + [rung_qty[-1] + front_qty]
+    if front_qty and all(lo <= q <= hi for q in slid):
+        return [("front", len(rung_qty) - 1, front_qty)]
+    target = ladder_targets(total, len(rung_qty))
+    excess = [("front", front_qty)] if front_qty else []
+    excess += [(i, q - t) for i, (q, t) in enumerate(zip(rung_qty, target)) if q > t]
+    deficit = [(i, t - q) for i, (q, t) in enumerate(zip(rung_qty, target)) if t > q]
+    moves = []
+    ei = di = 0
+    excess = [list(x) for x in excess]
+    deficit = [list(x) for x in deficit]
+    while ei < len(excess) and di < len(deficit):
+        n = min(excess[ei][1], deficit[di][1])
+        moves.append((excess[ei][0], deficit[di][0], n))
+        excess[ei][1] -= n
+        deficit[di][1] -= n
+        if excess[ei][1] == 0:
+            ei += 1
+        if deficit[di][1] == 0:
+            di += 1
+    return moves
+
+
 def fmt(symbol, p):
     if bad(p):
         return "n/a"
@@ -282,6 +321,36 @@ def main():
         fcd = ib.reqContractDetails(Contract(conId=c.conId))[0]
         listed = ib.reqContractDetails(Contract(secType="FUT", symbol=sym, exchange=exch, currency=c.currency,
                                                 tradingClass=tclass, multiplier=c.multiplier))
+        n_rungs = int(pc.get("ladder_months", 0) or 0)
+        if n_rungs:
+            # Ladder: keep the position spread equally over the next n listed months. The expiring
+            # month rolls into the month after the current last rung; over-weight rungs are evened out.
+            later = sorted((cd for cd in listed if expiry(cd) > expiry(fcd)), key=expiry)
+            rungs = later[:n_rungs]
+            if len(rungs) < n_rungs:
+                say(f"{sym}: only {len(rungs)} later months listed, ladder needs {n_rungs}; skipping")
+                continue
+            sign = 1 if qty > 0 else -1
+            held_by = {r[0].conId: r[1] for r in rows}
+            if any(h * sign < 0 for h in held_by.values()):
+                say(f"{sym}: ladder holds both long and short months; not handled, skipping")
+                continue
+            rung_ids = {cd.contract.conId for cd in rungs}
+            beyond = [r for r in rows[1:] if r[0].conId not in rung_ids]
+            if beyond:
+                say(f"{sym}: also holding {', '.join(f'{r[0].localSymbol} {r[1]:+g}' for r in beyond)} "
+                    f"outside the {n_rungs}-month ladder - left alone")
+            cur = [abs(held_by.get(cd.contract.conId, 0)) for cd in rungs]
+            moves = ladder_moves(abs(qty), cur)
+            tgt = ladder_targets(abs(qty) + sum(cur), n_rungs)
+            say(f"{sym}: ladder {n_rungs} months, target "
+                + ", ".join(f"{cd.contract.localSymbol} {sign * t:+d}" for cd, t in zip(rungs, tgt)))
+            for src, dst, k in moves:
+                scd = fcd if src == "front" else rungs[src]
+                dcd = rungs[dst]
+                plans.append(dict(sym=sym, fcd=scd, bcd=dcd, fc=scd.contract, bc=dcd.contract, qty=sign * k,
+                                  days=days, pc=pc, note=pc.get("note") or f"ladder {n_rungs}m"))
+            continue
         bcd = choose_back(fcd, listed, pc.get("back_month"))
         if not bcd:
             say(f"{sym} {c.localSymbol}: no later expiry found{' in ' + pc['back_month'] if pc.get('back_month') else ''}, skipping")
@@ -331,6 +400,7 @@ def main():
 
     # ---- price, check, stage
     to_place = []
+    after = {}
     for p in plans:
         sym, fc, bc, qty = p["sym"], p["fc"], p["bc"], p["qty"]
         tf, tb, tg = p["tf"], p["tb"], p["tg"]
@@ -361,8 +431,10 @@ def main():
               + (f"   [{p['note']}]" if p["note"] else ""))
         say(f"  legs:   {'SELL' if qty > 0 else 'BUY'} {n} {fc.localSymbol}   +   "
               f"{'BUY' if qty > 0 else 'SELL'} {n} {bc.localSymbol}")
-        back_now = sum(q for c, q in held.values() if c.conId == bc.conId)
-        say(f"  after:  {fc.localSymbol} 0, {bc.localSymbol} {back_now + qty:+g}")
+        src_now = after.get(fc.conId, sum(q for c, q in held.values() if c.conId == fc.conId))
+        dst_now = after.get(bc.conId, sum(q for c, q in held.values() if c.conId == bc.conId))
+        after[fc.conId], after[bc.conId] = src_now - qty, dst_now + qty
+        say(f"  after:  {fc.localSymbol} {src_now - qty:+g}, {bc.localSymbol} {dst_now + qty:+g}")
         say(f"  quotes: current {tf.bid}/{tf.ask}   next {tb.bid}/{tb.ask}")
         say(f"  spread (next - current): book {fmt(sym, book_bid)} / {fmt(sym, book_ask)} | "
               f"implied {fmt(sym, impl_bid)} / {fmt(sym, impl_ask)}")

@@ -69,6 +69,8 @@ C = {c.conId: c for c in [
     fut(13, "SPI", "SNFE", "AUD", "APH7", "20270318", "25", "AP"),
     fut(14, "MCL", "NYMEX", "USD", "MCLF7", "20261218", "100"),
     fut(15, "MCL", "NYMEX", "USD", "MCLG7", "20270119", "100"),
+    fut(18, "MCL", "NYMEX", "USD", "MCLH7", "20270219", "100"),
+    fut(19, "MCL", "NYMEX", "USD", "MCLJ7", "20270319", "100"),
     fut(16, "MES", "CME", "USD", "MESZ6", "20261218", "5"),
     fut(17, "MES", "CME", "USD", "MESH7", "20270319", "5"),
 ]}
@@ -77,11 +79,12 @@ POS = {1: 4, 2: 1, 3: 6, 5: -2, 7: 2, 10: 5, 12: -1, 14: 2, 15: 1, 16: -3}   # m
 Q = {1: (106.03125, 106.046875), 2: (105.890625, 105.90625), 3: (101.99609375, 102.0),
      4: (101.8828125, 101.890625), 5: (107.96875, 108.0), 6: (107.65625, 107.6875),
      7: (3602.4, 3602.6), 9: (3631.1, 3631.4), 10: (12498.0, 12500.0), 11: (12390.0, 12394.0),
-     12: (NAN, NAN), 13: (NAN, NAN), 16: (7174.0, 7174.5), 17: (7243.0, 7244.5)}
+     12: (NAN, NAN), 13: (NAN, NAN),
+     14: (82.60, 82.70), 15: (81.80, 81.90), 18: (81.00, 81.10), 19: (80.30, 80.40), 16: (7174.0, 7174.5), 17: (7243.0, 7244.5)}
 # spread book (next - current), keyed by (next, current); quoted to 6 dp like TWS
 BOOK = {(2, 1): (-0.144531, -0.140625), (4, 3): (-0.113281, -0.109375), (6, 5): (-0.335938, -0.328125),
         (9, 7): (28.7, 28.8), (11, 10): (NAN, NAN), (13, 12): (-12, -7), (17, 16): (69.2, 69.4)}
-GRID_OK = {"ZN": 1 / 128, "ZT": 1 / 256, "UB": 1 / 128, "MGC": 0.1, "XINA50": 1.0, "SPI": 1.0, "MES": 0.05}
+GRID_OK = {"MCL": 0.01, "ZN": 1 / 128, "ZT": 1 / 256, "UB": 1 / 128, "MGC": 0.1, "XINA50": 1.0, "SPI": 1.0, "MES": 0.05}
 
 
 class Event:
@@ -283,6 +286,29 @@ check("what-if exception -> not staged, nothing placed", IB.placed == [] and cod
 IB.whatIfOrder = orig
 code, out, err = run("--within", "45", "--only", "MGC", "--limit", "MGC=28.8")
 check("manual limit with no quotes warns it cannot be checked", "cannot check" in err + out)
+
+# ---- ladder (MCL): pure planner
+check("ladder targets 8 over 3 = 3/3/2", rf.ladder_targets(8, 3) == [3, 3, 2])
+check("ladder moves Jan3 Feb5 -> Jan->Mar 3, Feb->Apr 2",
+      rf.ladder_moves(3, [5, 0, 0]) == [("front", 1, 3), (0, 2, 2)])
+check("steady-state ladder: front 3 into empty new back month",
+      rf.ladder_moves(3, [3, 2, 0]) == [("front", 2, 3)])
+check("rotating ladder: front 3 slides to new back month when rungs stay within one",
+      rf.ladder_moves(3, [3, 2, 0]) == [("front", 2, 3)])
+check("lopsided ladder rebalances and keeps total",
+      sum(n for s_, d, n in rf.ladder_moves(2, [6, 0, 0])) == 2 + 6 - rf.ladder_targets(8, 3)[0])
+
+# ---- ladder (MCL): end to end. Fixture holds Jan +2, Feb +1 -> target Feb/Mar/Apr 1/1/1
+LCFG = TMP / "ladder.toml"
+LCFG.write_text('[products.MCL]\nladder_months = 3\nwithin_days = 45\n')
+code, out, err = run("--config", str(LCFG), "--only", "MCL", "--json")
+res = json.loads(out)
+mv = [(x["current"], x["next"], x["action"], x["quantity"]) for x in res["rolls"]]
+check("ladder e2e: two spreads from Jan into Mar and Apr",
+      mv == [("MCLF7", "MCLH7", "BUY", 1), ("MCLF7", "MCLJ7", "BUY", 1)])
+check("ladder e2e: target line printed", "target MCLG7 +1, MCLH7 +1, MCLJ7 +1" in err)
+check("ladder e2e: Jan ends flat after both moves", "MCLF7 +0, MCLJ7 +1" in err)
+check("ladder e2e: priced from implied bid", all(x["staged"] for x in res["rolls"]))
 
 # ---- status
 code, out, err = run("--status", "--json")
